@@ -13,11 +13,10 @@ func Balancer(c conn.Conn) balancer.Balancer {
 }
 
 type single struct {
-	conn        conn.Conn
-	needRefresh chan struct{}
+	conn conn.Conn
 
-	m                 sync.Mutex
-	needRefreshClosed bool
+	m           sync.Mutex
+	needRefresh chan struct{}
 }
 
 func (b *single) Create(conns []conn.Conn) balancer.Balancer {
@@ -61,11 +60,19 @@ func (b *single) checkIfNeedRefresh() {
 	b.m.Lock()
 	defer b.m.Unlock()
 
-	if b.needRefreshClosed {
+	if b.isClosed() {
 		return
 	}
-	b.needRefreshClosed = true
 	close(b.needRefresh)
+}
+
+func (b *single) isClosed() bool {
+	select {
+	case <-b.needRefresh:
+		return true
+	default:
+		return false
+	}
 }
 
 func IsSingle(i interface{}) bool {

@@ -73,9 +73,9 @@ func (m *multi) NeedRefresh(ctx context.Context) bool {
 	}
 }
 
-func (m *multi) Next(context.Context) conn.Conn {
+func (m *multi) Next(ctx context.Context) conn.Conn {
 	for _, b := range m.balancers {
-		if c := b.Next(nil); c != nil {
+		if c := b.Next(ctx); c != nil {
 			return c
 		}
 	}

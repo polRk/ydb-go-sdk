@@ -14,11 +14,10 @@ import (
 var randomSources = xrand.New(xrand.WithLock())
 
 type baseBalancer struct {
-	conns       []conn.Conn
-	needRefresh chan struct{}
+	conns []conn.Conn
 
-	m                 sync.Mutex
-	needRefreshClosed bool
+	m           sync.Mutex
+	needRefresh chan struct{}
 }
 
 func (r *baseBalancer) NeedRefresh(ctx context.Context) bool {
@@ -34,6 +33,15 @@ func (r *baseBalancer) NeedRefresh(ctx context.Context) bool {
 	}
 }
 
+func (r *baseBalancer) isClosed() bool {
+	select {
+	case <-r.needRefresh:
+		return true
+	default:
+		return false
+	}
+}
+
 func (r *baseBalancer) checkNeedRefresh(failedConns *int) {
 	connsCount := len(r.conns)
 	if connsCount > 0 && *failedConns <= connsCount/2 {
@@ -43,11 +51,10 @@ func (r *baseBalancer) checkNeedRefresh(failedConns *int) {
 	r.m.Lock()
 	defer r.m.Unlock()
 
-	if r.needRefreshClosed {
+	if r.isClosed() {
 		return
 	}
 
-	r.needRefreshClosed = true
 	close(r.needRefresh)
 }
 

@@ -13,7 +13,6 @@ import (
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/cluster/entry"
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/conn"
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/endpoint"
-	"github.com/ydb-platform/ydb-go-sdk/v3/internal/repeater"
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/xerrors"
 	"github.com/ydb-platform/ydb-go-sdk/v3/trace"
 )
@@ -31,15 +30,15 @@ var (
 )
 
 type Cluster struct {
-	sync.RWMutex
-
 	config   config.Config
 	pool     conn.Pool
 	balancer balancer.Balancer
 
+	conns     []conn.Conn
 	index     map[string]entry.Entry
 	endpoints map[uint32]conn.Conn // only one endpoint by node ID
 
+	m    sync.Mutex
 	done chan struct{}
 }
 
@@ -55,49 +54,6 @@ func (c *Cluster) isClosed() bool {
 // Pessimize connection in underling pool
 func (c *Cluster) Pessimize(ctx context.Context, cc conn.Conn, cause error) {
 	c.pool.Pessimize(ctx, cc, cause)
-}
-
-type crudOptionsHolder struct {
-	withLock bool
-}
-
-type CrudOption func(h *crudOptionsHolder)
-
-func WithoutLock() CrudOption {
-	return func(h *crudOptionsHolder) {
-		h.withLock = false
-	}
-}
-
-func parseOptions(opts ...CrudOption) *crudOptionsHolder {
-	h := &crudOptionsHolder{
-		withLock: true,
-	}
-	for _, o := range opts {
-		o(h)
-	}
-	return h
-}
-
-type Getter interface {
-	// Get returns next available connection.
-	// It returns error on given deadline cancellation or when cluster become closed.
-	Get(ctx context.Context) (cc conn.Conn, err error)
-}
-
-type Inserter interface {
-	// Insert inserts endpoint to cluster
-	Insert(ctx context.Context, endpoint endpoint.Endpoint, opts ...CrudOption)
-}
-
-type Remover interface {
-	// Remove removes endpoint from cluster
-	Remove(ctx context.Context, endpoint endpoint.Endpoint, opts ...CrudOption)
-}
-
-type Explorer interface {
-	SetExplorer(repeater repeater.Repeater)
-	Force()
 }
 
 func New(
@@ -139,39 +95,22 @@ func New(
 }
 
 func (c *Cluster) Close(ctx context.Context) (err error) {
-	defer close(c.done)
+	close(c.done)
 
 	onDone := trace.DriverOnClusterClose(c.config.Trace(), &ctx)
 	defer func() {
 		onDone(err)
 	}()
 
-	c.RWMutex.Lock()
-	defer c.RWMutex.Unlock()
+	c.m.Lock()
+	defer c.m.Unlock()
 
 	var issues []error
-	if len(c.index) > 0 {
-		issues = append(issues, fmt.Errorf(
-			"non empty index after remove all entries: %v",
-			func() (endpoints []string) {
-				for e := range c.index {
-					endpoints = append(endpoints, e)
-				}
-				return endpoints
-			}(),
-		))
-	}
 
-	if len(c.endpoints) > 0 {
-		issues = append(issues, fmt.Errorf(
-			"non empty nodes after remove all entries: %v",
-			func() (nodes []uint32) {
-				for e := range c.endpoints {
-					nodes = append(nodes, e)
-				}
-				return nodes
-			}(),
-		))
+	for _, conn := range c.conns {
+		if err := conn.Release(ctx); err != nil {
+			issues = append(issues, err)
+		}
 	}
 
 	if err = c.pool.Release(ctx); err != nil {
@@ -193,7 +132,7 @@ func (c *Cluster) get(ctx context.Context) (cc conn.Conn, err error) {
 		case <-ctx.Done():
 			return nil, xerrors.WithStackTrace(ctx.Err())
 		default:
-			cc = c.config.Balancer().Next(nil)
+			cc = c.config.Balancer().Next(ctx)
 			if cc == nil {
 				return nil, xerrors.WithStackTrace(ErrClusterEmpty)
 			}
@@ -207,15 +146,15 @@ func (c *Cluster) get(ctx context.Context) (cc conn.Conn, err error) {
 // Get returns next available connection.
 // It returns error on given deadline cancellation or when cluster become closed.
 func (c *Cluster) Get(ctx context.Context) (cc conn.Conn, err error) {
+	if c.isClosed() {
+		return nil, xerrors.WithStackTrace(ErrClusterClosed)
+	}
+
 	var cancel context.CancelFunc
 	// without client context deadline lock limited on MaxGetConnTimeout
 	// cluster endpoints cannot be updated at this time
 	ctx, cancel = context.WithTimeout(ctx, MaxGetConnTimeout)
 	defer cancel()
-
-	if c.isClosed() {
-		return nil, xerrors.WithStackTrace(ErrClusterClosed)
-	}
 
 	onDone := trace.DriverOnClusterGet(c.config.Trace(), &ctx)
 	defer func() {
@@ -225,23 +164,6 @@ func (c *Cluster) Get(ctx context.Context) (cc conn.Conn, err error) {
 			onDone(cc.Endpoint().Copy(), nil)
 		}
 	}()
-
-	// wait lock for read during Get
-	c.RWMutex.RLock()
-	defer c.RWMutex.RUnlock()
-
-	if e, ok := ctxbalancer.ContextEndpoint(ctx); ok {
-		cc, ok = c.endpoints[e.NodeID()]
-		if ok && cc.IsState(
-			conn.Created,
-			conn.Online,
-			conn.Offline,
-		) {
-			if err = cc.Ping(ctx); err == nil {
-				return cc, nil
-			}
-		}
-	}
 
 	return c.get(ctx)
 }

@@ -23,12 +23,7 @@ import (
 type clusterConnector interface {
 	Close(ctx context.Context) error
 	Get(ctx context.Context) (cc conn.Conn, err error)
-	Remove(ctx context.Context, endpoint endpoint.Endpoint, opts ...cluster.CrudOption)
 	Pessimize(ctx context.Context, cc conn.Conn, cause error)
-
-	// For discovery build
-	cluster.Inserter
-	cluster.Explorer
 	sync.Locker
 }
 

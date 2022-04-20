@@ -86,14 +86,14 @@ func TestMulti(t *testing.T) {
 	// Thus, we expect here that until first balancer is not empty
 	// balancer will return connections only from it.
 	for i := 0; i < n; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if !isOddConn(c) {
 			t.Fatalf("Next() returned unexpected Conn")
 		}
 	}
 	// Now remove all connections from first iface.
 	for i := 0; i < n/2; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if isOddConn(c) {
 			m.Remove(el[c])
 		}
@@ -101,19 +101,19 @@ func TestMulti(t *testing.T) {
 	// And check that balancer returns connections from the second
 	// iface.
 	for i := 0; i < n; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if !isEvenConn(c) {
 			t.Fatalf("Next() returned unexpected Conn")
 		}
 	}
 	// Now remove all connections from second iface.
 	for i := 0; i < n/2; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if isEvenConn(c) {
 			m.Remove(el[c])
 		}
 	}
-	if c := m.Next(); c != nil {
+	if c := m.Next(nil); c != nil {
 		t.Fatalf("Next() returned unexpected non-nil Conn")
 	}
 }
@@ -155,33 +155,33 @@ func TestPreferLocal(t *testing.T) {
 	// Thus, we expect here that until first balancer is not empty
 	// balancer will return connections only from it.
 	for i := 0; i < n; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if !c.Endpoint().LocalDC() {
 			t.Fatalf("Next() returned unexpected Conn")
 		}
 	}
 	// Now remove all connections from first iface.
 	for i := 0; i < n/2; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if c.Endpoint().LocalDC() {
 			m.Remove(el[c])
 		}
 	}
 	// And check that balancer returns connections from the second iface.
 	for i := 0; i < n; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if c.Endpoint().LocalDC() {
 			t.Fatalf("Next() returned unexpected Conn")
 		}
 	}
 	// Now remove all connections from second iface.
 	for i := 0; i < n/2; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if !c.Endpoint().LocalDC() {
 			m.Remove(el[c])
 		}
 	}
-	if c := m.Next(); c != nil {
+	if c := m.Next(nil); c != nil {
 		t.Fatalf("Next() returned unexpected non-nil Conn")
 	}
 }
@@ -224,33 +224,33 @@ func TestPreferEndpoint(t *testing.T) {
 	// Thus, we expect here that until first balancer is not empty
 	// balancer will return connections only from it.
 	for i := 0; i < n; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if c.Endpoint().Address() != preferredEndpoint {
 			t.Fatalf("Next() returned unexpected Conn")
 		}
 	}
 	// Now remove all connections from first iface.
 	for i := 0; i < 1; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if c.Endpoint().Address() == preferredEndpoint {
 			m.Remove(el[c])
 		}
 	}
 	// And check that balancer returns connections from the second iface.
 	for i := 0; i < n; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if c.Endpoint().Address() == preferredEndpoint {
 			t.Fatalf("Next() returned unexpected Conn")
 		}
 	}
 	// Now remove all connections from second iface.
 	for i := 0; i < n-1; i++ {
-		c := m.Next()
+		c := m.Next(nil)
 		if c.Endpoint().Address() != preferredEndpoint {
 			m.Remove(el[c])
 		}
 	}
-	if c := m.Next(); c != nil {
+	if c := m.Next(nil); c != nil {
 		t.Fatalf("Next() returned unexpected non-nil Conn")
 	}
 }
@@ -434,7 +434,7 @@ func TestRoundRobin(t *testing.T) {
 				r.Remove(melem[e.Address()])
 			}
 			for i := 0; i < test.repeat; i++ {
-				conn := r.Next()
+				conn := r.Next(nil)
 				if conn == nil {
 					if len(test.add) > len(test.del) {
 						t.Fatal("unexpected no-Conn")
@@ -487,7 +487,7 @@ func TestRandomChoice(t *testing.T) {
 				r.Remove(melem[e.Address()])
 			}
 			for i := 0; i < test.repeat*multiplier; i++ {
-				conn := r.Next()
+				conn := r.Next(nil)
 				if conn == nil {
 					if len(test.add) > len(test.del) {
 						t.Fatal("unexpected no-Conn")

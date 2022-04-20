@@ -1,6 +1,8 @@
 package multi
 
 import (
+	"context"
+
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/balancer"
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/conn"
 )
@@ -14,16 +16,16 @@ func Balancer(opts ...Option) balancer.Balancer {
 }
 
 type multi struct {
-	balancer []balancer.Balancer
-	filter   []func(conn.Conn) bool
+	balancers []balancer.Balancer
+	filters   []func(conn.Conn) bool
 }
 
 func (m *multi) Create(conns []conn.Conn) balancer.Balancer {
-	newBalancers := make([]balancer.Balancer, len(m.balancer))
-	for i, balancer := range m.balancer {
+	newBalancers := make([]balancer.Balancer, len(m.balancers))
+	for i, balancer := range m.balancers {
 		balancerConns := make([]conn.Conn, 0, len(conns))
 
-		filter := m.filter[i]
+		filter := m.filters[i]
 		for _, conn := range conns {
 			if filter(conn) {
 				balancerConns = append(balancerConns, conn)
@@ -33,25 +35,58 @@ func (m *multi) Create(conns []conn.Conn) balancer.Balancer {
 	}
 
 	return &multi{
-		balancer: newBalancers,
-		filter:   m.filter,
+		balancers: newBalancers,
+		filters:   m.filters,
 	}
 }
 
-func WithBalancer(b balancer.Balancer, filter func(cc conn.Conn) bool) Option {
-	return func(m *multi) {
-		m.balancer = append(m.balancer, b)
-		m.filter = append(m.filter, filter)
+func (m *multi) NeedRefresh(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
+	// buffered channel need for prevent race condition between send values and start read
+	needRefreshChannels := make(chan struct{}, 1)
+
+	waitRefreshSignal := func(b balancer.Balancer) {
+		go func() {
+			if b.NeedRefresh(ctx) {
+				select {
+				case needRefreshChannels <- struct{}{}:
+					// signal about need refresh
+				default:
+					// non block if channel has message already
+				}
+			}
+		}()
+	}
+
+	for _, b := range m.balancers {
+		waitRefreshSignal(b)
+	}
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-needRefreshChannels:
+		return true
 	}
 }
 
-type Option func(*multi)
-
-func (m *multi) Next() conn.Conn {
-	for _, b := range m.balancer {
-		if c := b.Next(); c != nil {
+func (m *multi) Next(context.Context) conn.Conn {
+	for _, b := range m.balancers {
+		if c := b.Next(nil); c != nil {
 			return c
 		}
 	}
 	return nil
 }
+
+func WithBalancer(b balancer.Balancer, filter func(cc conn.Conn) bool) Option {
+	return func(m *multi) {
+		m.balancers = append(m.balancers, b)
+		m.filters = append(m.filters, filter)
+	}
+}
+
+type Option func(*multi)

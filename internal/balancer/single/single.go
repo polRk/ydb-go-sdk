@@ -16,7 +16,7 @@ type single struct {
 	conn        conn.Conn
 	needRefresh chan struct{}
 
-	sync.Mutex
+	m                 sync.Mutex
 	needRefreshClosed bool
 }
 
@@ -32,7 +32,7 @@ func (b *single) Create(conns []conn.Conn) balancer.Balancer {
 	}
 }
 
-func (b *single) Next() conn.Conn {
+func (b *single) Next(context.Context) conn.Conn {
 	return b.conn
 }
 
@@ -53,8 +53,19 @@ func (b *single) NeedRefresh(ctx context.Context) bool {
 	}
 }
 
-func (b *single) checkIfNeedRefresh(){
-	if b.conn
+func (b *single) checkIfNeedRefresh() {
+	if b.conn != nil && balancer.IsOkConnection(b.conn, false) {
+		return
+	}
+
+	b.m.Lock()
+	defer b.m.Unlock()
+
+	if b.needRefreshClosed {
+		return
+	}
+	b.needRefreshClosed = true
+	close(b.needRefresh)
 }
 
 func IsSingle(i interface{}) bool {

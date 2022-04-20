@@ -71,7 +71,7 @@ func RoundRobin(conns []conn.Conn) balancer.Balancer {
 	}
 }
 
-func (r *roundRobin) Next() conn.Conn {
+func (r *roundRobin) Next(context.Context) conn.Conn {
 	connCount := len(r.conns)
 
 	failedConns := 0
@@ -109,7 +109,7 @@ func (r *randomChoice) Create(conns []conn.Conn) balancer.Balancer {
 	return RandomChoice(conns)
 }
 
-func (r *randomChoice) Next() conn.Conn {
+func (r *randomChoice) Next(context.Context) conn.Conn {
 	connCount := len(r.conns)
 
 	if connCount == 0 {

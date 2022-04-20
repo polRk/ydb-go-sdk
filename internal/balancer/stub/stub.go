@@ -37,7 +37,7 @@ func (s stubBalancer) Create(conns []conn.Conn) balancer.Balancer {
 	return nil
 }
 
-func (s stubBalancer) Next() conn.Conn {
+func (s stubBalancer) Next(context.Context) conn.Conn {
 	if f := s.OnNext; f != nil {
 		return f()
 	}

@@ -17,7 +17,7 @@ type Element interface{}
 type Balancer interface {
 	// Next returns next connection for request.
 	// Next MUST not return nil if it has at least one connection.
-	Next() conn.Conn
+	Next(ctx context.Context) conn.Conn
 
 	// Create makes empty balancer with same implementation
 	Create(conns []conn.Conn) Balancer
@@ -30,12 +30,12 @@ type Balancer interface {
 }
 
 func IsOkConnection(c conn.Conn, bannedIsOk bool) bool {
-	state := c.GetState()
-	if state == conn.Online || state == conn.Created || state == conn.Offline {
+	switch c.GetState() {
+	case conn.Online, conn.Created, conn.Offline:
 		return true
+	case conn.Banned:
+		return bannedIsOk
+	default:
+		return false
 	}
-	if bannedIsOk && state == conn.Banned {
-		return true
-	}
-	return false
 }

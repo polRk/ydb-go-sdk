@@ -1,12 +1,12 @@
 package rr
 
 import (
+	"context"
 	"math"
 	"sync"
 	"sync/atomic"
 
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/balancer"
-	"github.com/ydb-platform/ydb-go-sdk/v3/internal/balancer/list"
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/conn"
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/xrand"
 )
@@ -14,41 +14,41 @@ import (
 var randomSources = xrand.New(xrand.WithLock())
 
 type baseBalancer struct {
-	mu    sync.RWMutex
-	conns list.List
+	conns       []conn.Conn
+	needRefresh chan struct{}
+
+	m                 sync.Mutex
+	needRefreshClosed bool
 }
 
-func (r *baseBalancer) Contains(x balancer.Element) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	if x == nil {
+func (r *baseBalancer) NeedRefresh(ctx context.Context) bool {
+	if ctx.Err() != nil {
 		return false
 	}
 
-	el, ok := x.(*list.Element)
-	if !ok {
+	select {
+	case <-ctx.Done():
 		return false
+	case <-r.needRefresh:
+		return true
+	}
+}
+
+func (r *baseBalancer) checkNeedRefresh(failedConns *int) {
+	connsCount := len(r.conns)
+	if connsCount > 0 && *failedConns <= connsCount/2 {
+		return
 	}
 
-	return r.conns.Contains(el)
-}
+	r.m.Lock()
+	defer r.m.Unlock()
 
-func (r *baseBalancer) Insert(conn conn.Conn) balancer.Element {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	if r.needRefreshClosed {
+		return
+	}
 
-	e := r.conns.Insert(conn)
-	return e
-}
-
-func (r *baseBalancer) Remove(x balancer.Element) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	el := x.(*list.Element)
-	r.conns.Remove(el)
-	return true
+	r.needRefreshClosed = true
+	close(r.needRefresh)
 }
 
 type roundRobin struct {
@@ -57,30 +57,35 @@ type roundRobin struct {
 	next uint64
 }
 
-func (r *roundRobin) Create() balancer.Balancer {
-	return RoundRobin()
+func (r *roundRobin) Create(conns []conn.Conn) balancer.Balancer {
+	return RoundRobin(conns)
 }
 
-func RoundRobin() balancer.Balancer {
+func RoundRobin(conns []conn.Conn) balancer.Balancer {
 	return &roundRobin{
+		baseBalancer: baseBalancer{
+			conns: conns,
+		},
 		// random start need to prevent overload first nodes
 		next: uint64(randomSources.Int64(math.MaxInt64)),
 	}
 }
 
 func (r *roundRobin) Next() conn.Conn {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	connCount := len(r.conns)
+
+	failedConns := 0
+	defer r.checkNeedRefresh(&failedConns)
 
 	for _, bannedIsOk := range []bool{false, true} {
 		for i := 0; i < connCount; i++ {
+
 			index := int(atomic.AddUint64(&r.next, 1) % uint64(connCount))
-			c := r.conns[index].Conn
-			if isOkConnection(c, bannedIsOk) {
+			c := r.conns[index]
+			if balancer.IsOkConnection(c, bannedIsOk) {
 				return c
 			}
+			failedConns++
 		}
 	}
 
@@ -93,20 +98,18 @@ type randomChoice struct {
 	rand xrand.Rand
 }
 
-func RandomChoice() balancer.Balancer {
+func RandomChoice(conns []conn.Conn) balancer.Balancer {
 	return &randomChoice{
-		rand: xrand.New(xrand.WithLock(), xrand.WithSource(randomSources.Int64(math.MaxInt64))),
+		baseBalancer: baseBalancer{conns: conns},
+		rand:         xrand.New(xrand.WithLock(), xrand.WithSource(randomSources.Int64(math.MaxInt64))),
 	}
 }
 
-func (r *randomChoice) Create() balancer.Balancer {
-	return RandomChoice()
+func (r *randomChoice) Create(conns []conn.Conn) balancer.Balancer {
+	return RandomChoice(conns)
 }
 
 func (r *randomChoice) Next() conn.Conn {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	connCount := len(r.conns)
 
 	if connCount == 0 {
@@ -115,7 +118,7 @@ func (r *randomChoice) Next() conn.Conn {
 	}
 
 	// fast path
-	if c := r.conns[r.rand.Int(connCount)].Conn; isOkConnection(c, false) {
+	if c := r.conns[r.rand.Int(connCount)]; balancer.IsOkConnection(c, false) {
 		return c
 	}
 
@@ -128,25 +131,18 @@ func (r *randomChoice) Next() conn.Conn {
 		indexes[i], indexes[j] = indexes[j], indexes[i]
 	})
 
+	failedConns := 0
+	defer r.checkNeedRefresh(&failedConns)
+
 	for _, bannedIsOk := range []bool{false, true} {
 		for _, index := range indexes {
-			c := r.conns[index].Conn
-			if isOkConnection(c, bannedIsOk) {
+			c := r.conns[index]
+			if balancer.IsOkConnection(c, bannedIsOk) {
 				return c
 			}
+			failedConns++
 		}
 	}
 
 	return nil
-}
-
-func isOkConnection(c conn.Conn, bannedIsOk bool) bool {
-	state := c.GetState()
-	if state == conn.Online || state == conn.Created {
-		return true
-	}
-	if bannedIsOk && state == conn.Banned {
-		return true
-	}
-	return false
 }

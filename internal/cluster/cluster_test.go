@@ -125,23 +125,6 @@ func TestClusterMergeEndpoints(t *testing.T) {
 	})
 }
 
-func mergeEndpointIntoCluster(ctx context.Context, c *Cluster, curr, next []endpoint.Endpoint) {
-	SortEndpoints(curr)
-	SortEndpoints(next)
-	DiffEndpoints(curr, next,
-		func(i, j int) {
-			c.Remove(ctx, curr[i])
-			c.Insert(ctx, next[j])
-		},
-		func(i, j int) {
-			c.Insert(ctx, next[j])
-		},
-		func(i, j int) {
-			c.Remove(ctx, curr[i])
-		},
-	)
-}
-
 func TestDiffEndpoint(t *testing.T) {
 	// lists must be sorted
 	var noEndpoints []endpoint.Endpoint
@@ -279,6 +262,7 @@ func TestEndpointSwitchLocalDCFlag(t *testing.T) {
 				}),
 			),
 			conn.NewPool(ctx, config.New()),
+			nil, // TODO: actualize
 		)
 	)
 	for _, test := range []struct {
@@ -331,7 +315,6 @@ func TestEndpointSwitchLocalDCFlag(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			SortEndpoints(test.next)
 			DiffEndpoints(
 				curr,
 				test.next,

@@ -3,7 +3,6 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +34,6 @@ type Cluster struct {
 	config config.Config
 	pool   conn.Pool
 
-	explorer  repeater.Repeater
 	index     map[string]entry.Entry
 	endpoints map[uint32]conn.Conn // only one endpoint by node ID
 
@@ -71,10 +69,6 @@ func (c *Cluster) Pessimize(ctx context.Context, cc conn.Conn, cause error) {
 		return
 	}
 
-	if !c.config.Balancer().Contains(entry.Handle) {
-		return
-	}
-
 	if c.explorer == nil {
 		return
 	}
@@ -96,10 +90,6 @@ func (c *Cluster) Pessimize(ctx context.Context, cc conn.Conn, cause error) {
 // Force reexpore cluster
 func (c *Cluster) Force() {
 	c.explorer.Force()
-}
-
-func (c *Cluster) SetExplorer(repeater repeater.Repeater) {
-	c.explorer = repeater
 }
 
 type crudOptionsHolder struct {
@@ -149,6 +139,7 @@ func New(
 	ctx context.Context,
 	config config.Config,
 	pool conn.Pool,
+	endpoints []endpoint.Endpoint,
 ) *Cluster {
 	onDone := trace.DriverOnClusterInit(config.Trace(), &ctx)
 	defer func() {
@@ -373,12 +364,6 @@ func compareEndpoints(a, b endpoint.Endpoint) int {
 		a.Address(),
 		b.Address(),
 	)
-}
-
-func SortEndpoints(es []endpoint.Endpoint) {
-	sort.Slice(es, func(i, j int) bool {
-		return compareEndpoints(es[i], es[j]) < 0
-	})
 }
 
 func DiffEndpoints(curr, next []endpoint.Endpoint, eq, add, del func(i, j int)) {

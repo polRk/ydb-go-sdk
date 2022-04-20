@@ -1,6 +1,8 @@
 package balancer
 
 import (
+	"context"
+
 	"github.com/ydb-platform/ydb-go-sdk/v3/internal/conn"
 )
 
@@ -17,15 +19,23 @@ type Balancer interface {
 	// Next MUST not return nil if it has at least one connection.
 	Next() conn.Conn
 
-	// Insert inserts new connection.
-	Insert(conn.Conn) Element
-
-	// Remove removes previously inserted connection.
-	Remove(Element) bool
-
-	// Contains returns true if Balancer contains requested element.
-	Contains(Element) bool
-
 	// Create makes empty balancer with same implementation
-	Create() Balancer
+	Create(conns []conn.Conn) Balancer
+
+	// NeedRefresh sync call, which return in one of cases
+	// first - if balancer has many pessimized nodes and need refresh (may be never)
+	// ctx cancelled, must be cancelled be caller for prevent goroutines leak
+	// return true if the balancer need refresh
+	NeedRefresh(ctx context.Context) bool
+}
+
+func IsOkConnection(c conn.Conn, bannedIsOk bool) bool {
+	state := c.GetState()
+	if state == conn.Online || state == conn.Created || state == conn.Offline {
+		return true
+	}
+	if bannedIsOk && state == conn.Banned {
+		return true
+	}
+	return false
 }

@@ -9,6 +9,15 @@ on:
     inputs:
       github_pull_request_number:
         required: true
+      slo_workload_duration_seconds:
+        default: '600'
+        required: false
+      slo_workload_read_max_rps:
+        default: '1000'
+        required: false
+      slo_workload_write_max_rps:
+        default: '100'
+        required: false
 
 jobs:
   ydb-slo-action-init:
@@ -70,5 +79,5 @@ jobs:
       - name: Run SLO Tests
         run: |
           ./tests/slo/.bin/${{matrix.sdk.id}}_linux_amd64 create grpc://localhost:2135 /Root/testdb
-          ./tests/slo/.bin/${{matrix.sdk.id}}_linux_amd64 run grpc://localhost:2135 /Root/testdb -prom-pgw localhost:9091 -report-period 500 -time 60
+          ./tests/slo/.bin/${{matrix.sdk.id}}_linux_amd64 run grpc://localhost:2135 /Root/testdb -prom-pgw localhost:9091 -report-period 500 -time ${{inputs.slo_workload_duration_seconds}} -read-rps ${{inputs.slo_workload_read_max_rps}} -write-rps ${{inputs.slo_workload_write_max_rps}}
           ./tests/slo/.bin/${{matrix.sdk.id}}_linux_amd64 cleanup grpc://localhost:2135 /Root/testdb
